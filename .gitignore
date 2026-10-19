@@ -11,7 +11,6 @@ target/
 **/test_snapshots/
 
 # IDE / editor
-.vscode/
 .idea/
 *.iml
 *.swp
@@ -25,11 +24,11 @@ abi/
 .stellar/
 
 # Environment secrets
-.env
-.env.*
 !.env.example
 
 # cargo-mutants output
 mutants.out/
 mutants.out.old/
 
+config.bat
+node_modules

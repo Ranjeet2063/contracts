@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "CONTRACT_ID=$(python3 ../../scripts/deployment_address.py --network testnet --contract \"Alert Registry\") && stellar contract bindings typescript --wasm ../../target/wasm32-unknown-unknown/release/alert_registry.wasm --output-dir ./dist --contract-id \"$CONTRACT_ID\" --overwrite",
+    "build": "node init && CONTRACT_ID=$(python3 ../../scripts/deployment_address.py --network testnet --contract \"Alert Registry\") && stellar contract bindings typescript --wasm ../../target/wasm32-unknown-unknown/release/alert_registry.wasm --output-dir ./dist --contract-id \"$CONTRACT_ID\" --overwrite",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
