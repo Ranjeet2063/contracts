@@ -109,7 +109,7 @@ The `rules` field is a `Vec<String>` containing serialized rule descriptors. Eac
 | `rule:transfer` | Alert when the target contract emits a transfer-like action. |
 | `rule:mint` | Alert when the target contract performs a mint or issuance event. |
 
-The alert registry stores these descriptors verbatim and validates that each entry uses a recognized prefix before accepting it. Off-chain watcher logic still interprets prefixes and applies the corresponding alert behavior.
+The alert registry stores these descriptors verbatim and validates that each entry uses a recognized prefix before accepting it. Off-chain watcher logic still interprets prefixes and applies the corresponding alert behavior. If a descriptor is unrecognized, the contract returns `ContractError::InvalidRuleDescriptor`. If duplicate descriptors are provided, it returns `ContractError::DuplicateRule`. If more than 50 descriptors are supplied, it returns `ContractError::TooManyRules`.
 
 ---
 
@@ -121,7 +121,7 @@ Registers a new alert configuration for a target contract address.
 
 **Requires auth:** `owner`
 
-**Validation:** Rule descriptors are checked against the known prefixes `rule:transfer` and `rule:mint`, and the contract panics if any rule is not recognized.
+**Validation:** Rule descriptors are checked against the known prefixes `rule:transfer` and `rule:mint`. The contract does not panic; invalid descriptors return `ContractError::InvalidRuleDescriptor`. In addition, duplicates return `ContractError::DuplicateRule`, and supplying more than 50 rules returns `ContractError::TooManyRules`.
 
 **Parameters**
 
@@ -559,9 +559,7 @@ Updates only the label of an existing alert, leaving `rules` and `webhook_hash` 
 
 **Returns:** `Result<(), ContractError>`
 
-**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
-
-**Panics:** if `label` exceeds 128 bytes.
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner; `EmptyLabel` if `label` is empty; `LabelTooLong` if `label` exceeds 128 bytes.
 
 ---
 
