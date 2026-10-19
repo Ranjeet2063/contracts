@@ -6,19 +6,35 @@ Soroban persistent storage entries have a **Time-To-Live (TTL)** measured in **l
 
 ## Current TTL Configuration
 
-All persistent storage entries in `alert-registry` use a **default TTL of
-17 280 ledgers (~24 hours)**:
+Persistent storage entries in `alert-registry` are categorized across ten distinct keys, detailed in [docs/storage.md](storage.md):
+
+1. `DataKey::Alert(id)` — individual alert configs
+2. `DataKey::RemovedAlert(id)` — tombstones for removed alerts to enable incremental sync (see #360)
+3. `DataKey::AlertActive(id)` — per-alert active flag for fast lookups without full config deserialization
+4. `DataKey::OwnerIndex(address)` — list of alert IDs owned by a given address
+5. `DataKey::OwnerLiveCount(address)` — running count of non-removed alerts owned by address
+6. `DataKey::ContractIndex(address)` — list of alert IDs watching a given target contract
+7. `DataKey::ContractLiveCount(address)` — running count of non-removed alerts targeting a contract
+8. `DataKey::DeactivationCursor(address)` — cursor tracking pagination position during batch deactivation
+9. `DataKey::PendingTransfer(id)` — pending ownership transfer proposals awaiting acceptance
+10. `DataKey::AdminSuspended(id)` — administrative suspension marker set by `deactivate_alert_by_admin`
+
+### Default TTL
+
+Most persistent entries use the standard **default TTL of 17,280 ledgers (~24 hours)**:
 
 ```rust
 // DEFAULT_TTL = 17_280  (~24 hours at 5 s/ledger)
 env.storage().persistent().extend_ttl(&key, DEFAULT_TTL, DEFAULT_TTL);
 ```
 
-This applies to:
-- `DataKey::Alert(id)` — individual alert configs
-- `DataKey::AlertActive(id)` — per-alert active flag
-- `DataKey::OwnerIndex(address)` — per-owner alert ID lists
-- `DataKey::ContractIndex(address)` — per-contract alert ID lists
+### Non-Default TTL Paths
+
+Not all persistent keys follow the standard `DEFAULT_TTL` lifecycle:
+- **`PendingTransfer(id)`**: Uses `ALERT_TRANSFER_EXPIRY_LEDGERS` (17,280 ledgers, ~24 hours). The entry is written when `propose_alert_transfer` is called and explicitly expires after `ALERT_TRANSFER_EXPIRY_LEDGERS` ledgers if not accepted, rejected, or cancelled.
+- **Tombstones (`RemovedAlert(id)`)**: Written with `DEFAULT_TTL` when an alert is removed. Unlike active alert records, tombstones are never renewed or bumped by `bump_alert`, intentionally expiring after ~24 hours (see #360).
+- **`DeactivationCursor(address)`**: Has its own dedicated TTL path managed exclusively by `deactivate_all_alerts`. When a batch deactivation cannot finish all alerts within a single transaction, the cursor is saved with `DEFAULT_TTL`. If the deactivation is completed in a subsequent batch or if an alert is removed, the cursor is deleted immediately.
+- **`ContractLiveCount(address)`**: Maintained incrementally alongside `ContractIndex(target)`. It is lazily initialized and extended with `DEFAULT_TTL` during contract index mutations, and also refreshed as part of `touch_alert` when present.
 
 The `watcher-registry` uses **instance storage**, which has its own TTL managed
 by the network. No registry entrypoint extends it as a side effect, so see
@@ -120,32 +136,41 @@ the alert's content.
 
 Every mutating call refreshes the **whole set** of entries an alert depends on
 through a single internal helper, `touch_alert`:
-`Alert(id)`, `AlertActive(id)`, `OwnerIndex(owner)`, `OwnerLiveCount(owner)`, `ContractIndex(target)`.
+- `DataKey::Alert(id)`
+- `DataKey::AlertActive(id)`
+- `DataKey::OwnerIndex(owner)`
+- `DataKey::OwnerLiveCount(owner)` (extended when present; see [docs/storage.md](storage.md))
+- `DataKey::ContractIndex(target)`
+- `DataKey::ContractLiveCount(target)` (extended when present)
+- `DataKey::AdminSuspended(id)` (extended when present)
+
 Mutators that rewrite the alert call `persist_alert`, which writes the config
 and its `AlertActive` flag and then calls `touch_alert` with `DEFAULT_TTL`, so
-no mutator can extend one entry and forget another. (`OwnerLiveCount` is only
-extended when present; see `docs/storage.md`.)
+no mutator can extend one entry and forget another.
 
-| Function              | Entries extended |
-|-----------------------|-----------------|
-| `register_alert`      | Full set, to `DEFAULT_TTL` |
-| `update_alert`        | Full set, to `DEFAULT_TTL` |
-| `update_webhook`      | Full set, to `DEFAULT_TTL` |
-| `update_label`        | Full set, to `DEFAULT_TTL` |
-| `propose_webhook`     | Full set, to `DEFAULT_TTL` |
-| `confirm_webhook`     | Full set, to `DEFAULT_TTL` |
+| Function | Entries extended |
+|---|---|
+| `register_alert` | Full set, to `DEFAULT_TTL`; initializes `OwnerLiveCount` and `ContractLiveCount` |
+| `update_alert` | Full set, to `DEFAULT_TTL` |
+| `update_webhook` | Full set, to `DEFAULT_TTL` |
+| `update_label` | Full set, to `DEFAULT_TTL` |
+| `propose_webhook` | Full set, to `DEFAULT_TTL` |
+| `confirm_webhook` | Full set, to `DEFAULT_TTL` |
 | `cancel_webhook_proposal` | Full set, to `DEFAULT_TTL` |
-| `deactivate_alert_by_admin` | Full set, to `DEFAULT_TTL` |
-| `accept_alert_transfer` | Full set with the **new** owner's `OwnerIndex`/`OwnerLiveCount`, to `DEFAULT_TTL` |
-| `propose_alert_transfer` | `PendingTransfer(id)` only, to `ALERT_TRANSFER_EXPIRY_LEDGERS` |
-| `update_target_contract` | Full set with the **new** target's `ContractIndex`, to `DEFAULT_TTL`; the old target's index is rewritten and extended |
-| `deactivate_all_alerts` | Full set for each deactivated alert, to `DEFAULT_TTL` |
-| `renew_alert_ttl`     | Full set, to `DEFAULT_TTL` — data unchanged |
-| `bump_alert`          | Full set, to the requested TTL (capped at `MAX_TTL`) — data unchanged |
-| `remove_alert`        | Entry is deleted (no TTL needed); owner/contract indexes and `OwnerLiveCount` are rewritten and extended |
+| `deactivate_alert_by_admin` | Full set, to `DEFAULT_TTL`; writes and extends `AdminSuspended(id)` |
+| `unlock_alert_by_admin` | Full set, to `DEFAULT_TTL`; removes `AdminSuspended(id)` |
+| `accept_alert_transfer` | Full set with the **new** owner's `OwnerIndex`/`OwnerLiveCount`, to `DEFAULT_TTL`; the old owner's index and counter are rewritten and extended; `PendingTransfer(id)` is removed |
+| `reject_alert_transfer` | Deletes `PendingTransfer(id)`; alert's own entries are untouched |
+| `cancel_alert_transfer` | Deletes `PendingTransfer(id)`; alert's own entries are untouched |
+| `propose_alert_transfer` | `PendingTransfer(id)` only, to `ALERT_TRANSFER_EXPIRY_LEDGERS`; alert's own entries are untouched |
+| `update_target_contract` | Full set with the **new** target's `ContractIndex`/`ContractLiveCount`, to `DEFAULT_TTL`; the old target's index and counter are rewritten and extended |
+| `deactivate_all_alerts` | Full set for each deactivated alert, to `DEFAULT_TTL`; updates and extends `DeactivationCursor(caller)` if batch is incomplete, or deletes it if complete |
+| `renew_alert_ttl` | Full set, to `DEFAULT_TTL` — data unchanged |
+| `bump_alert` | Full set, to the requested TTL (capped at `MAX_TTL`) — data unchanged |
+| `remove_alert` | `Alert(id)` and `AlertActive(id)` deleted; `RemovedAlert(id)` tombstone created and extended to `DEFAULT_TTL`; `OwnerIndex(owner)`, `OwnerLiveCount(owner)`, `ContractIndex(target)`, `ContractLiveCount(target)` updated and extended to `DEFAULT_TTL`; `PendingTransfer(id)` and `DeactivationCursor(owner)` removed |
 | `remove_alert_by_admin` | Same as `remove_alert` |
 
-Read-only functions (`get_alert`, `get_alerts_for_contract`, `get_alerts_by_owner`) do **not** extend the TTL.
+Read-only functions (`get_alert`, `get_alerts_for_contract`, `get_alerts_by_owner`, `get_non_removed_alert_count`, etc.) do **not** extend the TTL. For full details on storage tiers and data structures, see [docs/storage.md](storage.md).
 
 ## Implications
 

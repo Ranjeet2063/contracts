@@ -96,9 +96,9 @@ bash scripts/deploy.sh
 This will:
 - Compile `alert-registry` and `watcher-registry` to optimized `wasm32-unknown-unknown` binaries using single-crate `--locked` builds.
 - Install the WASM bytecode onto Testnet.
-- Instantiate and initialize `AlertRegistry` and `WatcherRegistry` with the deployer/admin address.
+- Instantiate and atomically initialize `AlertRegistry` and `WatcherRegistry` via `__constructor` with the deployer/admin address (closing the deploy-then-initialize front-running window).
 - Wire up watcher-gating on `AlertRegistry` by invoking `set_watcher_registry` pointing to `WatcherRegistry` (unless `--no-gating` is passed).
-- Instantiate and atomically initialize `AlertRegistry` and `WatcherRegistry` via `__constructor` (closing the deploy-then-initialize front-running window).
+- Verify the deployed configuration (`get_admin`, `get_watcher_registry`).
 - Print the newly assigned contract addresses and WASM hashes.
 
 ### Step 3: Verify Deployed WASM Hashes

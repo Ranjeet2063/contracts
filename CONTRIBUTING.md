@@ -262,6 +262,11 @@ Because these triggers are decoupled, releases must follow the sequence below in
 - [ ] `Publish Contract ABIs` workflow passed and attached ABI JSON files (`alert-registry.json`, `watcher-registry.json`) to the release.
 - [ ] `Publish TypeScript Bindings` workflow passed and published the latest package to npm.
 
+## Repository Hygiene & Ephemeral Files Policy
+
+- **No Ephemeral PR/Audit Markdown Files:** Do not commit transient PR descriptions, temporary lint fix summaries, or point-in-time audit notes (such as `CLIPPY_*.md` or `issue-*-audit.md`) to the repository root or `docs/`.
+- **Permanent Placement:** Lasting architectural notes belong in `docs/`, release notes belong in `CHANGELOG.md`, and code fix rationale belongs directly in git commit messages and GitHub pull request bodies.
+
 ## Merge Policy
 
 ### Branch Protection on `main`
